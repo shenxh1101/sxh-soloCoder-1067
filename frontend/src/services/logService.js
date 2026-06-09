@@ -59,3 +59,22 @@ export const createLogsBatch = (data) => {
     data
   })
 }
+
+// 导出日志
+export const exportLogs = (params) => {
+  return request({
+    url: '/logs/export',
+    method: 'get',
+    params,
+    responseType: 'blob'
+  })
+}
+
+// 获取异常样例日志
+export const getExceptionSamples = (exceptionHash, limit = 3) => {
+  return request({
+    url: `/logs/exceptions/${exceptionHash}/samples`,
+    method: 'get',
+    params: { limit }
+  })
+}

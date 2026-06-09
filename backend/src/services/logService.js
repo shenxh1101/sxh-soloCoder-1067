@@ -183,6 +183,7 @@ function queryLogs(filters = {}) {
     keyword,
     level,
     source,
+    exception_type,
     page = 1,
     page_size = 20
   } = filters;
@@ -234,6 +235,18 @@ function queryLogs(filters = {}) {
     }
   }
 
+  if (exception_type) {
+    if (exception_type.includes(',')) {
+      const types = exception_type.split(',').filter(t => t.trim());
+      const placeholders = types.map(() => '?').join(', ');
+      whereClause.push(`exception_type IN (${placeholders})`);
+      params.push(...types);
+    } else {
+      whereClause.push('exception_type = ?');
+      params.push(exception_type);
+    }
+  }
+
   const whereSql = whereClause.length > 0 ? `WHERE ${whereClause.join(' AND ')}` : '';
 
   // 查询总数
@@ -250,11 +263,15 @@ function queryLogs(filters = {}) {
 
   const logs = dataStmt.all(...params, page_size, offset);
 
-  // 解析 metadata
+  // 解析 metadata 并提取 traceId
   logs.forEach(log => {
     if (log.metadata) {
       try {
-        log.metadata = JSON.parse(log.metadata);
+        const parsedMetadata = JSON.parse(log.metadata);
+        log.metadata = parsedMetadata;
+        if (parsedMetadata.traceId !== undefined) {
+          log.traceId = parsedMetadata.traceId;
+        }
       } catch (e) {
         // 解析失败保持原样
       }
@@ -272,7 +289,7 @@ function queryLogs(filters = {}) {
 
 // 异常聚合 - 按 exception_hash 分组统计
 function getExceptionAggregate(filters = {}) {
-  const { app_id, start_time, end_time, page = 1, page_size = 20 } = filters;
+  const { app_id, start_time, end_time, exception_type, page = 1, page_size = 20 } = filters;
 
   let whereClause = ['exception_hash IS NOT NULL'];
   let params = [];
@@ -292,6 +309,18 @@ function getExceptionAggregate(filters = {}) {
     params.push(end_time);
   }
 
+  if (exception_type) {
+    if (exception_type.includes(',')) {
+      const types = exception_type.split(',').filter(t => t.trim());
+      const placeholders = types.map(() => '?').join(', ');
+      whereClause.push(`exception_type IN (${placeholders})`);
+      params.push(...types);
+    } else {
+      whereClause.push('exception_type = ?');
+      params.push(exception_type);
+    }
+  }
+
   const whereSql = `WHERE ${whereClause.join(' AND ')}`;
 
   // 查询总数（不同的异常哈希数量）
@@ -305,6 +334,7 @@ function getExceptionAggregate(filters = {}) {
   const offset = (page - 1) * page_size;
   const dataStmt = db.prepare(`
     SELECT 
+      app_id,
       exception_hash,
       exception_type,
       message,
@@ -313,20 +343,23 @@ function getExceptionAggregate(filters = {}) {
       MAX(timestamp) as last_seen,
       GROUP_CONCAT(DISTINCT source) as sources
     FROM logs ${whereSql}
-    GROUP BY exception_hash, exception_type, message
+    GROUP BY app_id, exception_hash, exception_type, message
     ORDER BY last_seen DESC
     LIMIT ? OFFSET ?
   `);
 
   const exceptions = dataStmt.all(...params, page_size, offset);
 
-  // 处理 sources 字段
+  // 处理 sources 字段和获取样例日志
   exceptions.forEach(e => {
     if (e.sources) {
       e.sources = e.sources.split(',');
     } else {
       e.sources = [];
     }
+
+    // 获取最近3条样例日志
+    e.sample_logs = getExceptionSamples(e.exception_hash, 3);
   });
 
   return {
@@ -335,6 +368,167 @@ function getExceptionAggregate(filters = {}) {
     page: parseInt(page),
     page_size: parseInt(page_size),
     total_pages: Math.ceil(total / page_size)
+  };
+}
+
+// 获取异常样例日志
+function getExceptionSamples(exception_hash, limit = 3) {
+  const stmt = db.prepare(`
+    SELECT id, timestamp, level, message, stack_trace
+    FROM logs
+    WHERE exception_hash = ?
+    ORDER BY timestamp DESC
+    LIMIT ?
+  `);
+
+  return stmt.all(exception_hash, limit);
+}
+
+// CSV 字段转义
+function escapeCSVField(field) {
+  if (field === null || field === undefined) {
+    return '';
+  }
+  const str = String(field);
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+// 导出日志为 CSV
+function exportLogsToCSV(filters = {}) {
+  const {
+    app_id,
+    start_time,
+    end_time,
+    keyword,
+    level,
+    source,
+    exception_type
+  } = filters;
+
+  let whereClause = [];
+  let params = [];
+
+  if (app_id) {
+    whereClause.push('l.app_id = ?');
+    params.push(app_id);
+  }
+
+  if (start_time) {
+    whereClause.push('l.timestamp >= ?');
+    params.push(start_time);
+  }
+
+  if (end_time) {
+    whereClause.push('l.timestamp <= ?');
+    params.push(end_time);
+  }
+
+  if (keyword) {
+    whereClause.push('(l.message LIKE ? OR l.stack_trace LIKE ?)');
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  if (level) {
+    if (level.includes(',')) {
+      const levels = level.split(',').filter(l => l.trim());
+      const placeholders = levels.map(() => '?').join(', ');
+      whereClause.push(`l.level IN (${placeholders})`);
+      params.push(...levels);
+    } else {
+      whereClause.push('l.level = ?');
+      params.push(level);
+    }
+  }
+
+  if (source) {
+    if (source.includes(',')) {
+      const sources = source.split(',').filter(s => s.trim());
+      const placeholders = sources.map(() => '?').join(', ');
+      whereClause.push(`l.source IN (${placeholders})`);
+      params.push(...sources);
+    } else {
+      whereClause.push('l.source = ?');
+      params.push(source);
+    }
+  }
+
+  if (exception_type) {
+    if (exception_type.includes(',')) {
+      const types = exception_type.split(',').filter(t => t.trim());
+      const placeholders = types.map(() => '?').join(', ');
+      whereClause.push(`l.exception_type IN (${placeholders})`);
+      params.push(...types);
+    } else {
+      whereClause.push('l.exception_type = ?');
+      params.push(exception_type);
+    }
+  }
+
+  const whereSql = whereClause.length > 0 ? `WHERE ${whereClause.join(' AND ')}` : '';
+
+  // 查询所有符合条件的日志，join 应用表获取应用名称
+  const stmt = db.prepare(`
+    SELECT 
+      l.timestamp,
+      a.name as app_name,
+      l.level,
+      l.source,
+      l.message,
+      l.exception_type,
+      l.metadata
+    FROM logs l
+    LEFT JOIN applications a ON l.app_id = a.id
+    ${whereSql}
+    ORDER BY l.timestamp DESC
+  `);
+
+  const logs = stmt.all(...params);
+
+  // 生成 CSV
+  const headers = ['时间', '应用', '级别', '来源', '消息', '异常类型', 'TraceId'];
+  const rows = logs.map(log => {
+    let traceId = '';
+    if (log.metadata) {
+      try {
+        const parsed = JSON.parse(log.metadata);
+        if (parsed.traceId !== undefined) {
+          traceId = parsed.traceId;
+        }
+      } catch (e) {
+        // 解析失败保持空
+      }
+    }
+
+    return [
+      log.timestamp,
+      log.app_name,
+      log.level,
+      log.source,
+      log.message,
+      log.exception_type,
+      traceId
+    ].map(escapeCSVField).join(',');
+  });
+
+  const csvContent = [headers.join(','), ...rows].join('\n');
+
+  // 生成文件名
+  const now = new Date();
+  const timestamp = now.getFullYear().toString() +
+    (now.getMonth() + 1).toString().padStart(2, '0') +
+    now.getDate().toString().padStart(2, '0') + '_' +
+    now.getHours().toString().padStart(2, '0') +
+    now.getMinutes().toString().padStart(2, '0') +
+    now.getSeconds().toString().padStart(2, '0');
+  const filename = `logs_${timestamp}.csv`;
+
+  return {
+    csv: csvContent,
+    filename,
+    count: logs.length
   };
 }
 
@@ -447,6 +641,8 @@ module.exports = {
   getLogById,
   queryLogs,
   getExceptionAggregate,
+  getExceptionSamples,
+  exportLogsToCSV,
   getLogSummary,
   generateExceptionHash
 };

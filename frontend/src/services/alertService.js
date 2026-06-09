@@ -70,3 +70,12 @@ export const resolveAlert = (id) => {
     method: 'post'
   })
 }
+
+// 测试通知发送
+export const testNotification = (data) => {
+  return request({
+    url: '/alerts/rules/test-notification',
+    method: 'post',
+    data
+  })
+}

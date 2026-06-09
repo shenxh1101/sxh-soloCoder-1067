@@ -1,11 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const logService = require('../services/logService');
+const { apiKeyAuth } = require('../middleware/auth');
 
-// POST /api/logs - 单条日志写入
-router.post('/', (req, res) => {
+// POST /api/logs - 单条日志写入（需要 API Key 认证）
+router.post('/', apiKeyAuth, (req, res) => {
   try {
-    const log = logService.createLog(req.body);
+    // 使用 req.appId，忽略请求体中的 app_id，防止越权
+    const logData = { ...req.body, app_id: req.appId };
+    const log = logService.createLog(logData);
     res.status(201).json({
       success: true,
       data: log
@@ -18,10 +21,14 @@ router.post('/', (req, res) => {
   }
 });
 
-// POST /api/logs/batch - 批量上报
-router.post('/batch', (req, res) => {
+// POST /api/logs/batch - 批量上报（需要 API Key 认证）
+router.post('/batch', apiKeyAuth, (req, res) => {
   try {
-    const result = logService.createLogsBatch(req.body);
+    // 使用 req.appId，忽略请求体中的 app_id，防止越权
+    const logsData = Array.isArray(req.body) 
+      ? req.body.map(log => ({ ...log, app_id: req.appId }))
+      : req.body;
+    const result = logService.createLogsBatch(logsData);
     res.status(201).json({
       success: true,
       data: result
@@ -98,6 +105,34 @@ router.get('/summary', (req, res) => {
       success: true,
       data: result
     });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+// GET /api/logs/export - 导出日志为 CSV（注意：必须放在 /:id 路由之前）
+router.get('/export', (req, res) => {
+  try {
+    const filters = {
+      app_id: req.query.app_id,
+      start_time: req.query.start_time,
+      end_time: req.query.end_time,
+      keyword: req.query.keyword,
+      level: req.query.level,
+      source: req.query.source
+    };
+
+    const result = logService.exportLogsToCSV(filters);
+    
+    // 设置响应头
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    
+    // 发送 CSV 内容（添加 BOM 以支持 Excel 正确显示中文）
+    res.send('\ufeff' + result.csv);
   } catch (err) {
     res.status(400).json({
       success: false,

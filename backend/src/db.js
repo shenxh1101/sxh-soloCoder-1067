@@ -25,6 +25,19 @@ function initDatabase() {
     )
   `);
 
+  // 尝试为已存在的表添加 status 字段（如果不存在）
+  try {
+    db.exec(`
+      ALTER TABLE applications ADD COLUMN status TEXT NOT NULL DEFAULT 'active'
+    `);
+    console.log('已为 applications 表添加 status 字段');
+  } catch (err) {
+    // 如果字段已存在，忽略错误
+    if (!err.message.includes('duplicate column name')) {
+      console.log('检查 applications 表 status 字段:', err.message);
+    }
+  }
+
   // 日志表
   db.exec(`
     CREATE TABLE IF NOT EXISTS logs (

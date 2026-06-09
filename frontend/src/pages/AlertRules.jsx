@@ -33,7 +33,8 @@ import {
   deleteAlertRule,
   toggleAlertRule,
   getAlertRecords,
-  resolveAlert
+  resolveAlert,
+  testNotification
 } from '../services/alertService.js'
 import { getApps } from '../services/appService.js'
 
@@ -72,12 +73,15 @@ function AlertRules() {
   ]
 
   const levelThresholds = [
-    { value: 'DEBUG', label: 'DEBUG' },
-    { value: 'INFO', label: 'INFO' },
-    { value: 'WARN', label: 'WARN' },
-    { value: 'ERROR', label: 'ERROR' },
-    { value: 'FATAL', label: 'FATAL' }
+    { value: 'debug', label: 'DEBUG' },
+    { value: 'info', label: 'INFO' },
+    { value: 'warn', label: 'WARN' },
+    { value: 'error', label: 'ERROR' },
+    { value: 'fatal', label: 'FATAL' }
   ]
+
+  const [testingNotification, setTestingNotification] = useState(false)
+  const [expandedRecordKeys, setExpandedRecordKeys] = useState([])
 
   const getConditionTypeLabel = (type) => {
     return conditionTypes.find(t => t.value === type)?.label || type
@@ -95,6 +99,77 @@ function AlertRules() {
   const getRuleName = (ruleId) => {
     const rule = rules.find(r => r.id === ruleId)
     return rule ? rule.name : ruleId
+  }
+
+  const getNotifyTypeColor = (type) => {
+    const colors = {
+      email: 'blue',
+      sms: 'orange',
+      webhook: 'purple',
+      dingtalk: '#1677ff',
+      wechat: '#07c160'
+    }
+    return colors[type] || 'default'
+  }
+
+  const getLevelColor = (level) => {
+    const colors = {
+      debug: 'default',
+      info: 'blue',
+      warn: 'orange',
+      error: 'red',
+      fatal: '#ff4d4f'
+    }
+    return colors[level?.toLowerCase()] || 'default'
+  }
+
+  const handleTestNotification = async () => {
+    try {
+      const values = form.getFieldsValue()
+      
+      if (!['webhook', 'dingtalk', 'wechat'].includes(values.notify_type)) {
+        message.warning('请选择 webhook、钉钉或企业微信通知类型进行测试')
+        return
+      }
+
+      if (!values.webhook_url) {
+        message.warning('请先填写 Webhook 地址')
+        return
+      }
+
+      if (!values.name) {
+        message.warning('请先填写规则名称')
+        return
+      }
+
+      setTestingNotification(true)
+      const res = await testNotification({
+        notify_type: values.notify_type,
+        webhook_url: values.webhook_url,
+        rule_name: values.name
+      })
+
+      if (res.success) {
+        message.success(res.message || '测试通知发送成功')
+      } else {
+        message.error(res.message || '测试通知发送失败')
+      }
+    } catch (error) {
+      console.error('测试通知失败:', error)
+      message.error(error.message || '测试通知发送失败')
+    } finally {
+      setTestingNotification(false)
+    }
+  }
+
+  const handleToggleExpand = (recordId) => {
+    setExpandedRecordKeys(prev => {
+      if (prev.includes(recordId)) {
+        return prev.filter(key => key !== recordId)
+      } else {
+        return [...prev, recordId]
+      }
+    })
   }
 
   const loadRules = async () => {
@@ -190,23 +265,32 @@ function AlertRules() {
         is_enabled: values.is_enabled ? 1 : 0
       }
 
+      if (data.condition_type === 'level') {
+        if (data.level_threshold) {
+          data.level_threshold = data.level_threshold.toLowerCase()
+        }
+        if (data.condition_value) {
+          data.condition_value = data.condition_value.toLowerCase()
+        }
+      }
+
       if (editingRule) {
         const res = await updateAlertRule(editingRule.id, data)
         if (res.success) {
-          message.success('规则更新成功')
+          message.success('编辑成功')
           setModalVisible(false)
           loadRules()
         } else {
-          message.error(res.message || '更新失败')
+          message.error(res.message || '编辑失败')
         }
       } else {
         const res = await createAlertRule(data)
         if (res.success) {
-          message.success('规则创建成功')
+          message.success('新增成功')
           setModalVisible(false)
           loadRules()
         } else {
-          message.error(res.message || '创建失败')
+          message.error(res.message || '新增失败')
         }
       }
     } catch (error) {
@@ -241,15 +325,15 @@ function AlertRules() {
     try {
       const res = await toggleAlertRule(id, enabled)
       if (res.success) {
-        message.success(enabled ? '规则已启用' : '规则已禁用')
+        message.success(enabled ? '启用成功' : '禁用成功')
         loadRules()
       } else {
-        message.error(res.message || '操作失败')
+        message.error(res.message || (enabled ? '启用失败' : '禁用失败'))
         loadRules()
       }
     } catch (error) {
       console.error('切换状态失败:', error)
-      message.error('操作失败')
+      message.error(enabled ? '启用失败' : '禁用失败')
       loadRules()
     }
   }
@@ -258,14 +342,14 @@ function AlertRules() {
     try {
       const res = await resolveAlert(id)
       if (res.success) {
-        message.success('告警已标记为已解决')
+        message.success('解决成功')
         loadRecords(pagination.current, pagination.pageSize)
       } else {
-        message.error(res.message || '操作失败')
+        message.error(res.message || '解决失败')
       }
     } catch (error) {
       console.error('解决告警失败:', error)
-      message.error('操作失败')
+      message.error('解决失败')
     }
   }
 
@@ -298,14 +382,15 @@ function AlertRules() {
     {
       title: '阈值',
       key: 'threshold',
-      width: 150,
+      width: 200,
       render: (_, record) => {
         if (record.condition_type === 'keyword') {
-          return record.condition_value || '-'
+          return <>包含关键字: <strong>{record.condition_value || '-'}</strong></>
         } else if (record.condition_type === 'level') {
-          return record.level_threshold || '-'
+          const level = record.level_threshold || record.condition_value || '-'
+          return <>级别 >= <Tag color={getLevelColor(level)}>{level?.toUpperCase()}</Tag></>
         } else {
-          return record.condition_value || '-'
+          return <>错误数 >= <strong>{record.condition_value || '-'}</strong>/5分钟</>
         }
       }
     },
@@ -316,7 +401,8 @@ function AlertRules() {
       width: 120,
       render: (type) => {
         const label = getNotifyTypeLabel(type)
-        return <Tag>{label}</Tag>
+        const color = getNotifyTypeColor(type)
+        return <Tag color={color}>{label}</Tag>
       }
     },
     {
@@ -368,6 +454,25 @@ function AlertRules() {
     }
   ]
 
+  const extractLevelFromMessage = (message) => {
+    if (!message) return null
+    const levelMatch = message.match(/\[(debug|info|warn|error|fatal)\]/i)
+    if (levelMatch) return levelMatch[1].toLowerCase()
+    
+    const patterns = [
+      /级别达到阈值:\s*(\w+)/i,
+      /level\s*[:=]\s*(\w+)/i,
+      /(DEBUG|INFO|WARN|ERROR|FATAL)/
+    ]
+    
+    for (const pattern of patterns) {
+      const match = message.match(pattern)
+      if (match) return match[1].toLowerCase()
+    }
+    
+    return null
+  }
+
   const recordColumns = [
     {
       title: '状态',
@@ -376,10 +481,23 @@ function AlertRules() {
       width: 100,
       render: (resolved) => (
         <Badge
-          status={resolved ? 'default' : 'processing'}
+          status={resolved ? 'default' : 'error'}
           text={resolved ? '已解决' : '未解决'}
+          color={resolved ? 'default' : 'red'}
         />
       )
+    },
+    {
+      title: '告警级别',
+      key: 'level',
+      width: 100,
+      render: (_, record) => {
+        const level = extractLevelFromMessage(record.message)
+        if (level) {
+          return <Tag color={getLevelColor(level)}>{level.toUpperCase()}</Tag>
+        }
+        return '-'
+      }
     },
     {
       title: '规则名称',
@@ -417,19 +535,28 @@ function AlertRules() {
     {
       title: '操作',
       key: 'action',
-      width: 120,
+      width: 200,
       fixed: 'right',
       render: (_, record) => (
-        !record.resolved && (
+        <Space size="small">
           <Button
             type="link"
-            icon={<CheckCircleOutlined />}
-            onClick={() => handleResolve(record.id)}
             size="small"
+            onClick={() => handleToggleExpand(record.id)}
           >
-            标记已解决
+            {expandedRecordKeys.includes(record.id) ? '收起详情' : '查看详情'}
           </Button>
-        )
+          {!record.resolved && (
+            <Button
+              type="link"
+              icon={<CheckCircleOutlined />}
+              onClick={() => handleResolve(record.id)}
+              size="small"
+            >
+              标记已解决
+            </Button>
+          )}
+        </Space>
       )
     }
   ]
@@ -501,10 +628,21 @@ function AlertRules() {
                     onChange: handlePageChange
                   }}
                   expandable={{
+                    expandedRowKeys: expandedRecordKeys,
+                    onExpand: (expanded, record) => handleToggleExpand(record.id),
                     expandedRowRender: (record) => (
                       <Descriptions bordered size="small" column={1}>
+                        <Descriptions.Item label="告警级别">
+                          {extractLevelFromMessage(record.message) ? (
+                            <Tag color={getLevelColor(extractLevelFromMessage(record.message))}>
+                              {extractLevelFromMessage(record.message).toUpperCase()}
+                            </Tag>
+                          ) : '-'}
+                        </Descriptions.Item>
                         <Descriptions.Item label="告警消息">
-                          {record.message}
+                          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                            {record.message}
+                          </div>
                         </Descriptions.Item>
                         <Descriptions.Item label="触发时间">
                           {record.triggered_at ? dayjs(record.triggered_at).format('YYYY-MM-DD HH:mm:ss') : '-'}
@@ -514,8 +652,9 @@ function AlertRules() {
                         </Descriptions.Item>
                         <Descriptions.Item label="状态">
                           <Badge
-                            status={record.resolved ? 'default' : 'processing'}
+                            status={record.resolved ? 'default' : 'error'}
                             text={record.resolved ? '已解决' : '未解决'}
+                            color={record.resolved ? 'default' : 'red'}
                           />
                         </Descriptions.Item>
                         {record.resolved && record.resolved_at && (
@@ -543,6 +682,23 @@ function AlertRules() {
         width={600}
         destroyOnClose
         confirmLoading={submitting}
+        footer={(_, { OkBtn, CancelBtn }) => (
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <Button
+              onClick={handleTestNotification}
+              loading={testingNotification}
+              disabled={testingNotification || submitting}
+            >
+              测试通知
+            </Button>
+            <div>
+              <Space>
+                <CancelBtn />
+                <OkBtn />
+              </Space>
+            </div>
+          </div>
+        )}
       >
         <Form form={form} layout="vertical">
           <Form.Item
@@ -599,19 +755,34 @@ function AlertRules() {
                 )
               } else if (conditionType === 'level') {
                 return (
-                  <Form.Item
-                    name="level_threshold"
-                    label="级别阈值"
-                    rules={[{ required: true, message: '请选择级别阈值' }]}
-                  >
-                    <Select placeholder="请选择级别阈值">
-                      {levelThresholds.map(level => (
-                        <Option key={level.value} value={level.value}>
-                          {level.label}
-                        </Option>
-                      ))}
-                    </Select>
-                  </Form.Item>
+                  <>
+                    <Form.Item
+                      name="level_threshold"
+                      label="级别阈值"
+                      rules={[{ required: true, message: '请选择级别阈值' }]}
+                    >
+                      <Select placeholder="请选择级别阈值">
+                        {levelThresholds.map(level => (
+                          <Option key={level.value} value={level.value}>
+                            {level.label}
+                          </Option>
+                        ))}
+                      </Select>
+                    </Form.Item>
+                    <Form.Item
+                      name="condition_value"
+                      label="条件值（可选）"
+                      extra="与级别阈值二选一，级别值会自动转小写"
+                    >
+                      <Select placeholder="或在此处输入/选择级别">
+                        {levelThresholds.map(level => (
+                          <Option key={level.value} value={level.value}>
+                            {level.label}
+                          </Option>
+                        ))}
+                      </Select>
+                    </Form.Item>
+                  </>
                 )
               } else {
                 return (
@@ -623,7 +794,7 @@ function AlertRules() {
                     <InputNumber
                       min={1}
                       style={{ width: '100%' }}
-                      placeholder="请输入阈值"
+                      placeholder="请输入阈值（5分钟内的错误数量）"
                     />
                   </Form.Item>
                 )
@@ -651,7 +822,13 @@ function AlertRules() {
           >
             {({ getFieldValue }) => {
               const notifyType = getFieldValue('notify_type')
-              if (notifyType === 'webhook') {
+              const webhookTypes = ['webhook', 'dingtalk', 'wechat']
+              if (webhookTypes.includes(notifyType)) {
+                const placeholders = {
+                  webhook: '请输入通用 Webhook 地址',
+                  dingtalk: '请输入钉钉机器人 Webhook 地址',
+                  wechat: '请输入企业微信机器人 Webhook 地址'
+                }
                 return (
                   <Form.Item
                     name="webhook_url"
@@ -668,7 +845,7 @@ function AlertRules() {
                       }
                     ]}
                   >
-                    <Input placeholder="请输入 Webhook 地址" />
+                    <Input placeholder={placeholders[notifyType] || '请输入 Webhook 地址'} />
                   </Form.Item>
                 )
               }

@@ -91,6 +91,23 @@ router.delete('/rules/:id', (req, res) => {
   }
 });
 
+// POST /api/alerts/rules/test-notification - 测试通知发送
+router.post('/rules/test-notification', async (req, res) => {
+  try {
+    const { notify_type, webhook_url, rule_name } = req.body;
+    const result = await alertService.testNotification({ notify_type, webhook_url, rule_name });
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
 // GET /api/alerts/records - 告警记录
 router.get('/records', (req, res) => {
   try {
@@ -123,7 +140,28 @@ router.post('/records/:id/resolve', (req, res) => {
     const result = alertService.resolveAlert(parseInt(req.params.id));
     res.json({
       success: true,
-      data: result
+      message: result.message
+    });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+// POST /api/alerts/rules/test-notification - 测试通知发送
+router.post('/rules/test-notification', async (req, res) => {
+  try {
+    const { notify_type, webhook_url, rule_name } = req.body;
+    const result = await alertService.testNotification({
+      notify_type,
+      webhook_url,
+      rule_name: rule_name || '测试规则'
+    });
+    res.json({
+      success: result.success,
+      message: result.message
     });
   } catch (err) {
     res.status(400).json({

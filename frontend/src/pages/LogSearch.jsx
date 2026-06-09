@@ -15,7 +15,6 @@ import {
   Row,
   Col,
   Descriptions,
-  Collapse,
   Badge,
   Empty,
   Spin
@@ -32,14 +31,14 @@ import dayjs from 'dayjs'
 import {
   getLogs,
   getLogDetail,
-  getExceptionAggregation
+  getExceptionAggregation,
+  exportLogs,
+  getExceptionSamples
 } from '../services/logService.js'
 import { getApps } from '../services/appService.js'
 
 const { RangePicker } = DatePicker
 const { Option } = Select
-const { Panel } = Collapse
-const { TabPane } = Tabs
 
 // 日志检索页面
 function LogSearch() {
@@ -62,6 +61,11 @@ function LogSearch() {
     total: 0
   })
   const [form] = Form.useForm()
+  const [exporting, setExporting] = useState(false)
+  const [exceptionTypes, setExceptionTypes] = useState([])
+  const [expandedRowKeys, setExpandedRowKeys] = useState([])
+  const [exceptionSamples, setExceptionSamples] = useState({})
+  const [samplesLoading, setSamplesLoading] = useState({})
 
   // 加载应用列表
   const loadApps = async () => {
@@ -84,6 +88,16 @@ function LogSearch() {
   // 字段映射：snake_case 转 camelCase 用于显示
   const mapLogFields = (log) => {
     const app = apps.find(a => a.id === log.app_id)
+    const metadata = log.metadata || {}
+    const traceId = typeof metadata === 'string' 
+      ? (() => {
+          try {
+            return JSON.parse(metadata).traceId
+          } catch {
+            return null
+          }
+        })()
+      : metadata.traceId
     return {
       ...log,
       appName: app ? app.name : log.app_id,
@@ -91,7 +105,8 @@ function LogSearch() {
       exceptionType: log.exception_type,
       exceptionHash: log.exception_hash,
       extra: log.metadata,
-      level: (log.level || '').toLowerCase()
+      level: (log.level || '').toLowerCase(),
+      traceId
     }
   }
 
@@ -104,7 +119,7 @@ function LogSearch() {
       appName: app ? app.name : exception.app_id,
       lastOccurrence: exception.last_seen,
       firstOccurrence: exception.first_seen,
-      samples: exception.sample_log ? [exception.sample_log] : []
+      samples: exception.sample_logs || []
     }
   }
 
@@ -119,6 +134,7 @@ function LogSearch() {
     if (values.keyword) params.keyword = values.keyword
     if (values.level && values.level.length > 0) params.level = values.level.join(',')
     if (values.source && values.source.length > 0) params.source = values.source.join(',')
+    if (values.exception_type) params.exception_type = values.exception_type
     return params
   }
 
@@ -169,9 +185,7 @@ function LogSearch() {
     try {
       const values = form.getFieldsValue()
       const params = {
-        app_id: values.app_id,
-        start_time: values.timeRange && values.timeRange.length === 2 ? formatTime(values.timeRange[0]) : null,
-        end_time: values.timeRange && values.timeRange.length === 2 ? formatTime(values.timeRange[1]) : null,
+        ...getSearchParams(values),
         page,
         page_size: pageSize
       }
@@ -187,6 +201,10 @@ function LogSearch() {
           pageSize,
           total: data.total || 0
         }))
+        
+        // 提取所有异常类型去重
+        const types = [...new Set(mappedList.map(item => item.exception_type).filter(Boolean))]
+        setExceptionTypes(types)
       } else {
         setExceptionGroups([])
         setExceptionPagination(prev => ({
@@ -202,6 +220,36 @@ function LogSearch() {
       setExceptionGroups([])
     } finally {
       setLoading(false)
+    }
+  }
+
+  // 加载异常样例日志
+  const loadExceptionSamples = async (exceptionHash) => {
+    if (exceptionSamples[exceptionHash]) {
+      return
+    }
+    
+    setSamplesLoading(prev => ({ ...prev, [exceptionHash]: true }))
+    try {
+      const response = await getExceptionSamples(exceptionHash, 3)
+      if (response && response.success) {
+        const samples = (response.data || []).map(mapLogFields)
+        setExceptionSamples(prev => ({ ...prev, [exceptionHash]: samples }))
+      }
+    } catch (error) {
+      console.error('加载异常样例失败:', error)
+    } finally {
+      setSamplesLoading(prev => ({ ...prev, [exceptionHash]: false }))
+    }
+  }
+
+  // 处理展开行
+  const handleExpand = async (expanded, record) => {
+    if (expanded) {
+      setExpandedRowKeys([record.exception_hash])
+      await loadExceptionSamples(record.exception_hash)
+    } else {
+      setExpandedRowKeys([])
     }
   }
 
@@ -267,14 +315,35 @@ function LogSearch() {
 
   // 导出日志
   const handleExport = async () => {
+    setExporting(true)
+    const hideLoading = message.loading('正在导出日志，请稍候...', 0)
     try {
       const values = form.getFieldsValue()
       const params = getSearchParams(values)
-      message.success('日志导出功能已触发')
-      console.log('导出参数:', params)
+      
+      const blob = await exportLogs(params)
+      
+      if (blob) {
+        const url = window.URL.createObjectURL(new Blob([blob]))
+        const link = document.createElement('a')
+        link.href = url
+        const timestamp = dayjs().format('YYYYMMDD_HHmmss')
+        link.setAttribute('download', `logs_export_${timestamp}.csv`)
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        window.URL.revokeObjectURL(url)
+        
+        const size = blob.size || 0
+        const estimatedCount = Math.floor(size / 500)
+        message.success(`导出成功，约 ${estimatedCount} 条记录`)
+      }
     } catch (error) {
       console.error('导出日志失败:', error)
       message.error('导出日志失败')
+    } finally {
+      hideLoading()
+      setExporting(false)
     }
   }
 
@@ -368,6 +437,108 @@ function LogSearch() {
     }
   ]
 
+  // 渲染异常聚合展开内容
+  const renderExpandedRow = (record) => {
+    const samples = exceptionSamples[record.exception_hash] || record.samples || []
+    const isLoading = samplesLoading[record.exception_hash]
+    
+    return (
+      <div style={{ padding: '0 24px' }}>
+        <Spin spinning={isLoading} tip="加载样例日志中...">
+          <Descriptions 
+            bordered 
+            column={2} 
+            size="small" 
+            style={{ marginBottom: 16 }}
+            title="基本信息"
+          >
+            <Descriptions.Item label="异常哈希" span={2}>
+              <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                {record.exception_hash}
+              </span>
+            </Descriptions.Item>
+            <Descriptions.Item label="异常类型">
+              <span style={{ fontFamily: 'monospace', color: '#f5222d' }}>
+                {record.exception_type}
+              </span>
+            </Descriptions.Item>
+            <Descriptions.Item label="所属应用">
+              {record.appName}
+            </Descriptions.Item>
+            <Descriptions.Item label="首次出现">
+              {record.first_seen}
+            </Descriptions.Item>
+            <Descriptions.Item label="最后出现">
+              {record.last_seen}
+            </Descriptions.Item>
+            <Descriptions.Item label="出现次数">
+              <Badge count={record.count} showZero color="#f5222d" />
+            </Descriptions.Item>
+            <Descriptions.Item label="来源列表" span={2}>
+              {record.sources && record.sources.length > 0 ? (
+                <Space wrap>
+                  {record.sources.map((source, idx) => (
+                    <Tag key={idx}>{source}</Tag>
+                  ))}
+                </Space>
+              ) : (
+                <span style={{ color: '#999' }}>无</span>
+              )}
+            </Descriptions.Item>
+          </Descriptions>
+
+          <h4 style={{ marginTop: 0, marginBottom: 12 }}>最近 3 条样例日志</h4>
+          {samples.length > 0 ? (
+            samples.map((sample, index) => (
+              <Card 
+                key={index} 
+                size="small" 
+                style={{ marginBottom: 12, background: '#fafafa' }}
+                title={`样例 ${index + 1}`}
+              >
+                <Descriptions bordered column={2} size="small">
+                  <Descriptions.Item label="时间">
+                    {sample.timestamp}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="级别">
+                    <Tag color={getLevelColor(sample.level)}>
+                      {sample.level && sample.level.toUpperCase()}
+                    </Tag>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="消息" span={2}>
+                    {sample.message}
+                  </Descriptions.Item>
+                  {sample.stackTrace && (
+                    <Descriptions.Item label="堆栈跟踪" span={2}>
+                      <pre
+                        style={{
+                          background: '#fff2f0',
+                          padding: 12,
+                          borderRadius: 4,
+                          overflow: 'auto',
+                          maxHeight: 200,
+                          fontSize: 12,
+                          color: '#f5222d',
+                          margin: 0,
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-all'
+                        }}
+                      >
+                        {sample.stackTrace}
+                      </pre>
+                    </Descriptions.Item>
+                  )}
+                </Descriptions>
+              </Card>
+            ))
+          ) : (
+            <Empty description="暂无样例日志" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          )}
+        </Spin>
+      </div>
+    )
+  }
+
   // 异常聚合列配置
   const exceptionColumns = [
     {
@@ -382,7 +553,7 @@ function LogSearch() {
       )
     },
     {
-      title: '应用',
+      title: '所属应用',
       dataIndex: 'appName',
       key: 'appName',
       width: 120
@@ -471,6 +642,24 @@ function LogSearch() {
                 </Select>
               </Form.Item>
             </Col>
+            {activeTab === 'exceptions' && (
+              <Col xs={24} sm={12} md={6}>
+                <Form.Item name="exception_type" label="异常类型">
+                  <Select
+                    placeholder="请选择异常类型"
+                    allowClear
+                    showSearch
+                    optionFilterProp="children"
+                  >
+                    {exceptionTypes.map(type => (
+                      <Option key={type} value={type}>
+                        {type}
+                      </Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              </Col>
+            )}
           </Row>
           <Row gutter={16}>
             <Col xs={24} sm={18}>
@@ -501,6 +690,7 @@ function LogSearch() {
                   <Button
                     icon={<DownloadOutlined />}
                     onClick={handleExport}
+                    loading={exporting}
                   >
                     导出
                   </Button>
@@ -564,23 +754,10 @@ function LogSearch() {
                       emptyText: <Empty description="暂无异常数据" />
                     }}
                     expandable={{
-                      expandedRowRender: (record) => (
-                        <Collapse>
-                          {record.samples && record.samples.length > 0 ? (
-                            record.samples.map((sample, index) => (
-                              <Panel
-                                header={`样例 ${index + 1}: ${sample.timestamp}`}
-                                key={index}
-                              >
-                                <p>{sample.message}</p>
-                              </Panel>
-                            ))
-                          ) : (
-                            <Empty description="暂无样例数据" />
-                          )}
-                        </Collapse>
-                      ),
-                      rowExpandable: (record) => record.samples && record.samples.length > 0
+                      expandedRowRender: renderExpandedRow,
+                      onExpand: handleExpand,
+                      expandedRowKeys: expandedRowKeys,
+                      rowExpandable: () => true
                     }}
                     pagination={{
                       ...exceptionPagination,
@@ -623,6 +800,13 @@ function LogSearch() {
                 </Descriptions.Item>
                 <Descriptions.Item label="应用">{currentLog.appName}</Descriptions.Item>
                 <Descriptions.Item label="来源">{currentLog.source}</Descriptions.Item>
+                {currentLog.traceId && (
+                  <Descriptions.Item label="Trace ID" span={2}>
+                    <span style={{ fontFamily: 'monospace', fontSize: 12, color: '#1890ff' }}>
+                      {currentLog.traceId}
+                    </span>
+                  </Descriptions.Item>
+                )}
                 {currentLog.exceptionType && (
                   <Descriptions.Item label="异常类型" span={2}>
                     <span style={{ fontFamily: 'monospace', color: '#f5222d' }}>
@@ -644,16 +828,18 @@ function LogSearch() {
 
               {currentLog.stackTrace && (
                 <div style={{ marginBottom: 16 }}>
-                  <h4 style={{ marginTop: 0, marginBottom: 8 }}>堆栈信息</h4>
+                  <h4 style={{ marginTop: 0, marginBottom: 8 }}>堆栈跟踪</h4>
                   <pre
                     style={{
-                      background: '#f5f5f5',
+                      background: '#fff2f0',
                       padding: 16,
                       borderRadius: 4,
                       overflow: 'auto',
                       maxHeight: 300,
                       fontSize: 12,
-                      color: '#f5222d'
+                      color: '#f5222d',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-all'
                     }}
                   >
                     {currentLog.stackTrace}
@@ -663,19 +849,30 @@ function LogSearch() {
 
               {currentLog.extra && (
                 <div>
-                  <h4 style={{ marginTop: 0, marginBottom: 8 }}>扩展信息</h4>
+                  <h4 style={{ marginTop: 0, marginBottom: 8 }}>Metadata</h4>
                   <pre
                     style={{
                       background: '#f5f5f5',
                       padding: 16,
                       borderRadius: 4,
                       overflow: 'auto',
-                      fontSize: 12
+                      fontSize: 12,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-all'
                     }}
                   >
-                    {typeof currentLog.extra === 'string' 
-                      ? currentLog.extra 
-                      : JSON.stringify(currentLog.extra, null, 2)}
+                    {(() => {
+                      try {
+                        const metadata = typeof currentLog.extra === 'string' 
+                          ? JSON.parse(currentLog.extra) 
+                          : currentLog.extra
+                        return JSON.stringify(metadata, null, 2)
+                      } catch {
+                        return typeof currentLog.extra === 'string' 
+                          ? currentLog.extra 
+                          : JSON.stringify(currentLog.extra, null, 2)
+                      }
+                    })()}
                   </pre>
                 </div>
               )}

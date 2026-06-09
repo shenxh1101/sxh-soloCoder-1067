@@ -75,24 +75,26 @@ function createAlertRule(ruleData) {
   }
 
   // 验证通知类型
-  const validNotifyTypes = ['webhook', 'email', 'sms'];
+  const validNotifyTypes = ['email', 'sms', 'webhook', 'dingtalk', 'wechat'];
   if (!validNotifyTypes.includes(notify_type)) {
     throw new Error(`无效的通知类型: ${notify_type}`);
   }
 
-  // 如果是 webhook 类型，必须提供 webhook_url
-  if (notify_type === 'webhook' && !webhook_url) {
-    throw new Error('Webhook 通知类型必须提供 webhook_url');
+  // 如果是 webhook/dingtalk/wechat 类型，必须提供 webhook_url
+  const webhookNotifyTypes = ['webhook', 'dingtalk', 'wechat'];
+  if (webhookNotifyTypes.includes(notify_type) && !webhook_url) {
+    throw new Error(`${notify_type} 通知类型必须提供 webhook_url`);
   }
 
-  // 如果是级别条件，必须提供 level_threshold
-  if (condition_type === 'level' && !level_threshold) {
-    throw new Error('级别条件必须提供 level_threshold');
+  // 如果是级别条件，必须提供 level_threshold 或 condition_value
+  if (condition_type === 'level' && !level_threshold && !condition_value) {
+    throw new Error('级别条件必须提供 level_threshold 或 condition_value');
   }
 
-  // 验证级别阈值
-  if (level_threshold && !levelPriority.hasOwnProperty(level_threshold)) {
-    throw new Error(`无效的级别阈值: ${level_threshold}`);
+  // 验证级别阈值（支持大小写）
+  const normalizedLevel = (level_threshold || condition_value)?.toLowerCase();
+  if (condition_type === 'level' && normalizedLevel && !levelPriority.hasOwnProperty(normalizedLevel)) {
+    throw new Error(`无效的级别阈值: ${level_threshold || condition_value}`);
   }
 
   const createdAt = getCurrentTime();
@@ -105,12 +107,16 @@ function createAlertRule(ruleData) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  const finalLevelThreshold = condition_type === 'level' 
+    ? (level_threshold || condition_value)?.toLowerCase() 
+    : (level_threshold || null);
+
   const result = stmt.run(
     app_id,
     name,
     condition_type,
     condition_value,
-    level_threshold || null,
+    finalLevelThreshold,
     notify_type,
     webhook_url || null,
     is_enabled ? 1 : 0,
@@ -147,28 +153,31 @@ function updateAlertRule(id, ruleData) {
 
   // 验证通知类型
   if (notify_type) {
-    const validNotifyTypes = ['webhook', 'email', 'sms'];
+    const validNotifyTypes = ['email', 'sms', 'webhook', 'dingtalk', 'wechat'];
     if (!validNotifyTypes.includes(notify_type)) {
       throw new Error(`无效的通知类型: ${notify_type}`);
     }
   }
 
-  // 如果是 webhook 类型，必须提供 webhook_url
+  // 如果是 webhook/dingtalk/wechat 类型，必须提供 webhook_url
   const finalNotifyType = notify_type || existingRule.notify_type;
   const finalWebhookUrl = webhook_url !== undefined ? webhook_url : existingRule.webhook_url;
-  if (finalNotifyType === 'webhook' && !finalWebhookUrl) {
-    throw new Error('Webhook 通知类型必须提供 webhook_url');
+  const webhookNotifyTypes = ['webhook', 'dingtalk', 'wechat'];
+  if (webhookNotifyTypes.includes(finalNotifyType) && !finalWebhookUrl) {
+    throw new Error(`${finalNotifyType} 通知类型必须提供 webhook_url`);
   }
 
-  // 验证级别阈值
+  // 验证级别阈值（支持大小写）
   const finalConditionType = condition_type || existingRule.condition_type;
   const finalLevelThreshold = level_threshold !== undefined ? level_threshold : existingRule.level_threshold;
-  if (finalConditionType === 'level' && !finalLevelThreshold) {
-    throw new Error('级别条件必须提供 level_threshold');
+  const finalConditionValue = condition_value !== undefined ? condition_value : existingRule.condition_value;
+  if (finalConditionType === 'level' && !finalLevelThreshold && !finalConditionValue) {
+    throw new Error('级别条件必须提供 level_threshold 或 condition_value');
   }
 
-  if (finalLevelThreshold && !levelPriority.hasOwnProperty(finalLevelThreshold)) {
-    throw new Error(`无效的级别阈值: ${finalLevelThreshold}`);
+  const normalizedLevel = (finalLevelThreshold || finalConditionValue)?.toLowerCase();
+  if (finalConditionType === 'level' && normalizedLevel && !levelPriority.hasOwnProperty(normalizedLevel)) {
+    throw new Error(`无效的级别阈值: ${finalLevelThreshold || finalConditionValue}`);
   }
 
   const stmt = db.prepare(`
@@ -183,11 +192,19 @@ function updateAlertRule(id, ruleData) {
     WHERE id = ?
   `);
 
+  const updateConditionType = condition_type || existingRule.condition_type;
+  const updateLevelThreshold = level_threshold !== undefined ? level_threshold : existingRule.level_threshold;
+  const updateConditionValue = condition_value !== undefined ? condition_value : existingRule.condition_value;
+  
+  const dbLevelThreshold = updateConditionType === 'level'
+    ? (updateLevelThreshold || updateConditionValue)?.toLowerCase()
+    : (level_threshold !== undefined ? level_threshold : existingRule.level_threshold);
+
   stmt.run(
     name || existingRule.name,
     condition_type || existingRule.condition_type,
-    condition_value || existingRule.condition_value,
-    level_threshold !== undefined ? level_threshold : existingRule.level_threshold,
+    condition_value !== undefined ? condition_value : existingRule.condition_value,
+    dbLevelThreshold,
     notify_type || existingRule.notify_type,
     webhook_url !== undefined ? webhook_url : existingRule.webhook_url,
     is_enabled !== undefined ? (is_enabled ? 1 : 0) : existingRule.is_enabled,
@@ -308,8 +325,11 @@ function checkAlertRules(appId, level, message, logId) {
 
       switch (rule.condition_type) {
         case 'level':
-          // 检查日志级别是否达到阈值
-          if (levelPriority[level] >= levelPriority[rule.level_threshold]) {
+          // 检查日志级别是否达到阈值（统一转小写）
+          const normalizedLevel = level?.toLowerCase();
+          const normalizedThreshold = rule.level_threshold?.toLowerCase();
+          if (normalizedLevel && normalizedThreshold && 
+              levelPriority[normalizedLevel] >= levelPriority[normalizedThreshold]) {
             triggered = true;
             triggerMessage = `[${rule.name}] 日志级别达到阈值: ${level} >= ${rule.level_threshold}, 消息: ${message.substring(0, 100)}`;
           }
@@ -326,12 +346,13 @@ function checkAlertRules(appId, level, message, logId) {
         case 'error_count':
           // 统计最近一段时间内的错误数量
           const threshold = parseInt(rule.condition_value);
-          if (!isNaN(threshold) && (level === 'error' || level === 'fatal')) {
+          const normalizedLogLevel = level?.toLowerCase();
+          if (!isNaN(threshold) && (normalizedLogLevel === 'error' || normalizedLogLevel === 'fatal')) {
             // 统计最近5分钟内的错误数量
             const fiveMinutesAgo = dayjs().subtract(5, 'minute').format('YYYY-MM-DD HH:mm:ss');
             const countResult = db.prepare(`
               SELECT COUNT(*) as count FROM logs 
-              WHERE app_id = ? AND level IN ('error', 'fatal') AND timestamp >= ?
+              WHERE app_id = ? AND level IN ('error', 'fatal', 'ERROR', 'FATAL') AND timestamp >= ?
             `).get(appId, fiveMinutesAgo);
 
             if (countResult.count >= threshold) {
@@ -356,10 +377,8 @@ function checkAlertRules(appId, level, message, logId) {
         const recordId = createAlertRecord(rule.id, appId, triggerLogCount, triggerMessage);
         console.log(`告警已触发: ${triggerMessage}, 记录ID: ${recordId}`);
 
-        // 如果是 webhook 通知，发送 HTTP 请求
-        if (rule.notify_type === 'webhook' && rule.webhook_url) {
-          sendWebhookNotification(rule, triggerMessage, triggerLogCount, appId);
-        }
+        // 调用统一的通知发送函数
+        sendNotification(rule, triggerMessage, triggerLogCount, appId);
       }
     }
   } catch (err) {
@@ -367,25 +386,74 @@ function checkAlertRules(appId, level, message, logId) {
   }
 }
 
+// 统一发送通知函数
+async function sendNotification(rule, message, logCount, appId) {
+  try {
+    switch (rule.notify_type) {
+      case 'email':
+        console.log(`[邮件通知] ${message} - 规则: ${rule.name}, 应用ID: ${appId}`);
+        break;
+      case 'sms':
+        console.log(`[短信通知] ${message} - 规则: ${rule.name}, 应用ID: ${appId}`);
+        break;
+      case 'webhook':
+      case 'dingtalk':
+      case 'wechat':
+        if (rule.webhook_url) {
+          await sendWebhookNotification(rule, message, logCount, appId);
+        } else {
+          console.error(`[${rule.notify_type}通知] 缺少 webhook_url，规则ID: ${rule.id}`);
+        }
+        break;
+      default:
+        console.error(`未知的通知类型: ${rule.notify_type}`);
+    }
+  } catch (err) {
+    console.error('发送通知时出错:', err);
+  }
+}
+
 // 发送 Webhook 通知
 async function sendWebhookNotification(rule, message, logCount, appId) {
   try {
-    const payload = {
-      rule_id: rule.id,
-      rule_name: rule.name,
-      app_id: appId,
-      message,
-      log_count: logCount,
-      triggered_at: getCurrentTime(),
-      notify_type: rule.notify_type
-    };
-
-    // 使用 fetch 或 http 模块发送请求
     const http = require('http');
     const https = require('https');
     const url = require('url');
 
     const parsedUrl = url.parse(rule.webhook_url);
+    let payload;
+
+    // 根据通知类型构建不同的 payload
+    switch (rule.notify_type) {
+      case 'dingtalk':
+        payload = {
+          msgtype: 'text',
+          text: {
+            content: message
+          }
+        };
+        break;
+      case 'wechat':
+        payload = {
+          msgtype: 'markdown',
+          markdown: {
+            content: message
+          }
+        };
+        break;
+      case 'webhook':
+      default:
+        payload = {
+          rule_id: rule.id,
+          rule_name: rule.name,
+          app_id: appId,
+          message,
+          log_count: logCount,
+          triggered_at: getCurrentTime(),
+          notify_type: rule.notify_type
+        };
+    }
+
     const data = JSON.stringify(payload);
 
     const options = {
@@ -400,18 +468,30 @@ async function sendWebhookNotification(rule, message, logCount, appId) {
     };
 
     const client = parsedUrl.protocol === 'https:' ? https : http;
+    const notifyType = rule.notify_type;
+
     const req = client.request(options, (res) => {
-      console.log(`Webhook 发送成功，状态码: ${res.statusCode}`);
+      let responseData = '';
+      res.on('data', (chunk) => {
+        responseData += chunk;
+      });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          console.log(`[${notifyType}通知] 发送成功，状态码: ${res.statusCode}, 规则: ${rule.name}`);
+        } else {
+          console.error(`[${notifyType}通知] 发送失败，状态码: ${res.statusCode}, 响应: ${responseData}`);
+        }
+      });
     });
 
     req.on('error', (err) => {
-      console.error('Webhook 发送失败:', err.message);
+      console.error(`[${notifyType}通知] 发送失败: ${err.message}, 规则: ${rule.name}`);
     });
 
     req.write(data);
     req.end();
   } catch (err) {
-    console.error('发送 Webhook 通知时出错:', err);
+    console.error(`发送 ${rule.notify_type} 通知时出错:`, err);
   }
 }
 
@@ -431,6 +511,31 @@ function resolveAlert(recordId) {
   return { success: true, message: '告警已标记为已解决' };
 }
 
+// 测试通知发送
+async function testNotification({ notify_type, webhook_url, rule_name = '测试规则' }) {
+  const validNotifyTypes = ['webhook', 'dingtalk', 'wechat'];
+  if (!validNotifyTypes.includes(notify_type)) {
+    throw new Error(`无效的通知类型: ${notify_type}，必须是 webhook、dingtalk 或 wechat 之一`);
+  }
+
+  if (!webhook_url || !webhook_url.trim()) {
+    throw new Error('webhook_url 不能为空');
+  }
+
+  const message = `【测试通知】这是来自告警规则「${rule_name}」的测试消息。如果您收到此消息，说明 Webhook 配置成功！触发时间：${getCurrentTime()}`;
+
+  const testRule = {
+    id: 0,
+    name: rule_name,
+    notify_type,
+    webhook_url
+  };
+
+  await sendNotification(testRule, message, 1, 0);
+
+  return { success: true, message: '测试通知发送成功，请检查对应的通知渠道' };
+}
+
 module.exports = {
   getAlertRules,
   getAlertRuleById,
@@ -440,5 +545,7 @@ module.exports = {
   getAlertRecords,
   createAlertRecord,
   checkAlertRules,
+  sendNotification,
+  testNotification,
   resolveAlert
 };
