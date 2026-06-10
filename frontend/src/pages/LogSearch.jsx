@@ -770,7 +770,7 @@ function LogSearch() {
                     type="primary"
                     icon={<SearchOutlined />}
                     onClick={handleSearch}
-                  >activeTab === 'list' ? handleExport : tExcepions
+                  >
                     搜索
                   </Button>
                   <Button

@@ -70,7 +70,7 @@ function initDatabase() {
       app_id INTEGER NOT NULL,
       name TEXT NOT NULL,
       condition_type TEXT NOT NULL CHECK(condition_type IN ('error_count', 'keyword', 'level')),
-      condition_value TEXT NOT NULL,
+      condition_value TEXT,
       level_threshold TEXT CHECK(level_threshold IN ('debug', 'info', 'warn', 'error', 'fatal')),
       notify_type TEXT NOT NULL,
       notify_target TEXT,
@@ -80,6 +80,55 @@ function initDatabase() {
       FOREIGN KEY (app_id) REFERENCES applications(id) ON DELETE CASCADE
     )
   `);
+
+  // 迁移：修改 condition_value 字段允许为 NULL（SQLite 不支持直接修改列，需要重建表）
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(alert_rules)").all();
+    const conditionValueCol = tableInfo.find(c => c.name === 'condition_value');
+    
+    if (conditionValueCol && conditionValueCol.notnull === 1) {
+      console.log('正在迁移 alert_rules 表，修改 condition_value 允许为 NULL...');
+      
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS alert_rules_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          app_id INTEGER NOT NULL,
+          name TEXT NOT NULL,
+          condition_type TEXT NOT NULL CHECK(condition_type IN ('error_count', 'keyword', 'level')),
+          condition_value TEXT,
+          level_threshold TEXT CHECK(level_threshold IN ('debug', 'info', 'warn', 'error', 'fatal')),
+          notify_type TEXT NOT NULL,
+          notify_target TEXT,
+          webhook_url TEXT,
+          is_enabled INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (app_id) REFERENCES applications(id) ON DELETE CASCADE
+        )
+      `);
+      
+      db.exec(`
+        INSERT INTO alert_rules_new (
+          id, app_id, name, condition_type, condition_value, level_threshold,
+          notify_type, notify_target, webhook_url, is_enabled, created_at
+        )
+        SELECT id, app_id, name, condition_type, condition_value, level_threshold,
+          notify_type, notify_target, webhook_url, is_enabled, created_at
+        FROM alert_rules
+      `);
+      
+      db.exec(`
+        DROP TABLE alert_rules
+      `);
+      
+      db.exec(`
+        ALTER TABLE alert_rules_new RENAME TO alert_rules
+      `);
+      
+      console.log('alert_rules 表迁移完成，condition_value 现在允许为 NULL');
+    }
+  } catch (err) {
+    console.log('迁移 alert_rules 表失败:', err.message);
+  }
 
   // 尝试为已存在的 alert_rules 表添加 notify_target 字段（如果不存在）
   try {

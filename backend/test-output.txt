@@ -1,0 +1,33 @@
+﻿========== 鏈€缁堥獙璇佹祴璇?- 5涓牳蹇冮渶姹?==========
+
+=== 鍑嗗娴嬭瘯鏁版嵁 ===
+娴嬭瘯搴旂敤: 鐢ㄦ埛鏈嶅姟 (ID: 2)
+API Key: ea1c43c379ffc0a440a5ccfdd6b8e416686798e813830f4ca5e9bec5032ea1c4
+
+
+=== 闇€姹?锛氱骇鍒槇鍊艰鍒欎繚瀛?===
+node : 
+所在位置 行:1 字符: 18
++ & { cd backend ; node test-final-validation.js 2>&1 | Out-File -Encod ...
++                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+鉂?娴嬭瘯澶辫触: Request failed with status code 400
+   鐘舵€佺爜: 400
+   鍝嶅簲: {
+  "success": false,
+  "error": "NOT NULL constraint failed: alert_rules.condition_value"
+}
+   鍫嗘爤: AxiosError: Request failed with status code 400
+    at settle (D:\code\TraeProjects\1067\backend\node_modules\axios\dist\node\axios.cjs:2090:12)
+    at IncomingMessage.handleStreamEnd (D:\code\TraeProjects\1067\backend\node_modules\axios\dist\no
+de\axios.cjs:3788:11)
+    at IncomingMessage.emit (node:events:529:35)
+    at endReadableNT (node:internal/streams/readable:1400:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21)
+    at Axios.request (D:\code\TraeProjects\1067\backend\node_modules\axios\dist\node\axios.cjs:5133:
+41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async testAllRequirements (D:\code\TraeProjects\1067\backend\test-final-validation.js:31:26)
+娴嬭瘯锛氬彧濉簲鐢ㄣ€佽鍒欏悕銆佺骇鍒槇鍊煎拰閫氱煡閰嶇疆灏变繚瀛樻垚鍔?

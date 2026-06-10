@@ -68,6 +68,31 @@ router.get('/', (req, res) => {
   }
 });
 
+// GET /api/logs/exceptions - 异常聚合（别名，兼容前端调用）
+router.get('/exceptions', (req, res) => {
+  try {
+    const filters = {
+      app_id: req.query.app_id,
+      start_time: req.query.start_time,
+      end_time: req.query.end_time,
+      exception_type: req.query.exception_type,
+      page: req.query.page ? parseInt(req.query.page) : 1,
+      page_size: req.query.page_size ? parseInt(req.query.page_size) : 20
+    };
+
+    const result = logService.getExceptionAggregate(filters);
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
 // GET /api/logs/exceptions/aggregate - 异常聚合
 router.get('/exceptions/aggregate', (req, res) => {
   try {
@@ -75,6 +100,7 @@ router.get('/exceptions/aggregate', (req, res) => {
       app_id: req.query.app_id,
       start_time: req.query.start_time,
       end_time: req.query.end_time,
+      exception_type: req.query.exception_type,
       page: req.query.page ? parseInt(req.query.page) : 1,
       page_size: req.query.page_size ? parseInt(req.query.page_size) : 20
     };
