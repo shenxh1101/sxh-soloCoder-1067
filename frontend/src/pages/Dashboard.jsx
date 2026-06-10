@@ -6,7 +6,8 @@ import {
   BugOutlined,
   AppstoreOutlined,
   BellOutlined,
-  WarningOutlined
+  WarningOutlined,
+  CheckCircleOutlined
 } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import dayjs from 'dayjs'
@@ -18,6 +19,7 @@ import {
   getTopExceptions
 } from '../services/statsService.js'
 import { getApps } from '../services/appService.js'
+import { getAlertStatsByStatus } from '../services/alertService.js'
 
 // 统计概览页面
 function Dashboard() {
@@ -34,6 +36,12 @@ function Dashboard() {
   const [recentAlerts, setRecentAlerts] = useState([])
   const [topExceptions, setTopExceptions] = useState([])
   const [appMap, setAppMap] = useState({})
+  const [alertStats, setAlertStats] = useState({
+    pending: 0,
+    processing: 0,
+    ignored: 0,
+    resolved: 0
+  })
 
   // 获取应用名称映射
   const loadAppMap = async () => {
@@ -56,17 +64,27 @@ function Dashboard() {
     setLoading(true)
     try {
       // 并行加载所有数据
-      const [overviewRes, trendRes, levelRes, alertsRes, exceptionsRes] = await Promise.all([
+      const [overviewRes, trendRes, levelRes, alertsRes, exceptionsRes, alertStatsRes] = await Promise.all([
         getOverviewStats(),
         getLogTrend({ days: 7 }),
         getLogLevelDistribution({ days: 7 }),
         getRecentAlerts(),
-        getTopExceptions()
+        getTopExceptions(),
+        getAlertStatsByStatus()
       ])
 
       // 概览统计
       if (overviewRes.success && overviewRes.data) {
         setStats(overviewRes.data)
+        // 如果 overviewRes 包含 alert_stats，优先使用
+        if (overviewRes.data.alert_stats) {
+          setAlertStats(overviewRes.data.alert_stats)
+        }
+      }
+
+      // 告警状态统计
+      if (alertStatsRes.success && alertStatsRes.data) {
+        setAlertStats(alertStatsRes.data)
       }
 
       // 趋势数据
@@ -195,10 +213,40 @@ function Dashboard() {
       INFO: 'green',
       WARN: 'orange',
       ERROR: 'red',
-      DEBUG: 'blue',
-      FATAL: 'red'
+      DEBUG: 'red'
     }
     return colorMap[level] || 'default'
+  }
+
+  // 告警状态统计柱状图配置
+  const alertStatusOption = {
+    title: { text: '告警状态分布', left: 'center', textStyle: { fontSize: 16 } },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    legend: { data: ['数量'], top: 30 },
+    xAxis: {
+      type: 'category',
+      data: ['待处理', '处理中', '已忽略', '已解决'],
+      axisLabel: {
+        color: ['#f5222d', '#1890ff', '#faad14', '#52c41a']
+      }
+    },
+    yAxis: { type: 'value' },
+    series: [{
+      name: '数量',
+      type: 'bar',
+      barWidth: '50%',
+      data: [
+        { value: alertStats.pending, itemStyle: { color: '#f5222d' } },
+        { value: alertStats.processing, itemStyle: { color: '#1890ff' } },
+        { value: alertStats.ignored, itemStyle: { color: '#faad14' } },
+        { value: alertStats.resolved, itemStyle: { color: '#52c41a' } }
+      ],
+      label: {
+        show: true,
+        position: 'top'
+      }
+    }],
+    grid: { left: '3%', right: '4%', bottom: '3%', top: 80, containLabel: true }
   }
 
   // 告警列表列配置
@@ -319,6 +367,49 @@ function Dashboard() {
           </Col>
         </Row>
 
+        {/* 告警状态统计卡片 */}
+        <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+          <Col xs={12} sm={12} md={6} lg={6} xl={6}>
+            <Card>
+              <Statistic
+                title="待处理告警"
+                value={alertStats.pending}
+                prefix={<WarningOutlined />}
+                valueStyle={{ color: '#f5222d' }}
+              />
+            </Card>
+          </Col>
+          <Col xs={12} sm={12} md={6} lg={6} xl={6}>
+            <Card>
+              <Statistic
+                title="处理中告警"
+                value={alertStats.processing}
+                prefix={<BellOutlined />}
+                valueStyle={{ color: '#1890ff' }}
+              />
+            </Card>
+          </Col>
+          <Col xs={12} sm={12} md={6} lg={6} xl={6}>
+            <Card>
+              <Statistic
+                title="已忽略告警"
+                value={alertStats.ignored}
+                valueStyle={{ color: '#faad14' }}
+              />
+            </Card>
+          </Col>
+          <Col xs={12} sm={12} md={6} lg={6} xl={6}>
+            <Card>
+              <Statistic
+                title="已解决告警"
+                value={alertStats.resolved}
+                prefix={<CheckCircleOutlined />}
+                valueStyle={{ color: '#52c41a' }}
+              />
+            </Card>
+          </Col>
+        </Row>
+
         <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
           <Col xs={24} lg={14}>
             <Card>
@@ -336,6 +427,15 @@ function Dashboard() {
               ) : (
                 <Empty description="暂无数据" style={{ height: 350, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
               )}
+            </Card>
+          </Col>
+        </Row>
+
+        {/* 告警状态分布图表 */}
+        <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+          <Col xs={24}>
+            <Card>
+              <ReactECharts option={alertStatusOption} style={{ height: 350 }} />
             </Card>
           </Col>
         </Row>

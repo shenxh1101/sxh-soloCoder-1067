@@ -1,5 +1,6 @@
 const { db } = require('../db');
 const dayjs = require('dayjs');
+const alertService = require('./alertService');
 
 // 获取统计概览
 function getOverviewStats() {
@@ -27,12 +28,16 @@ function getOverviewStats() {
     SELECT COUNT(*) as count FROM alert_records WHERE resolved = 0
   `).get().count;
 
+  // 告警状态统计
+  const alertStats = alertService.getAlertStatsByStatus();
+
   return {
     total_logs: totalLogs,
     today_logs: todayLogs,
     error_logs: errorLogs,
     active_apps: activeApps,
     unresolved_alerts: unresolvedAlerts,
+    alert_stats: alertStats,
     generated_at: new Date().toISOString()
   };
 }

@@ -78,3 +78,13 @@ export const getExceptionSamples = (exceptionHash, limit = 3) => {
     params: { limit }
   })
 }
+
+// 导出异常聚合数据
+export const exportExceptions = (params) => {
+  return request({
+    url: '/logs/exceptions/export',
+    method: 'get',
+    params,
+    responseType: 'blob'
+  })
+}

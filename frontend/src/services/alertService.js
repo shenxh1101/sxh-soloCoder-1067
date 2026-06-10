@@ -79,3 +79,40 @@ export const testNotification = (data) => {
     data
   })
 }
+
+// 更新告警记录状态
+export const updateAlertRecordStatus = (id, data) => {
+  return request({
+    url: `/alerts/records/${id}/status`,
+    method: 'put',
+    data
+  })
+}
+
+// 分配处理人
+export const assignAlertRecord = (id, assignee) => {
+  return request({
+    url: `/alerts/records/${id}/assign`,
+    method: 'put',
+    data: { assignee }
+  })
+}
+
+// 获取告警状态统计
+export const getAlertStatsByStatus = (appId) => {
+  const params = appId ? { app_id: appId } : {}
+  return request({
+    url: '/alerts/stats/status',
+    method: 'get',
+    params
+  })
+}
+
+// 获取处理人统计
+export const getAlertStatsByAssignee = (params) => {
+  return request({
+    url: '/alerts/stats/assignee',
+    method: 'get',
+    params
+  })
+}

@@ -92,6 +92,33 @@ router.get('/exceptions/aggregate', (req, res) => {
   }
 });
 
+// GET /api/logs/exceptions/export - 导出异常聚合数据为 CSV
+router.get('/exceptions/export', (req, res) => {
+  try {
+    // 收集筛选参数
+    const filters = {
+      app_id: req.query.app_id,
+      start_time: req.query.start_time,
+      end_time: req.query.end_time,
+      exception_type: req.query.exception_type
+    };
+
+    const result = logService.exportExceptionsToCSV(filters);
+
+    // 设置响应头
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+
+    // 发送 CSV 内容（添加 BOM 以支持 Excel 正确显示中文）
+    res.send('\ufeff' + result.csv);
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
 // GET /api/logs/summary - 日志摘要
 router.get('/summary', (req, res) => {
   try {
@@ -116,13 +143,15 @@ router.get('/summary', (req, res) => {
 // GET /api/logs/export - 导出日志为 CSV（注意：必须放在 /:id 路由之前）
 router.get('/export', (req, res) => {
   try {
+    // 收集所有筛选参数，确保按当前筛选条件导出
     const filters = {
       app_id: req.query.app_id,
       start_time: req.query.start_time,
       end_time: req.query.end_time,
       keyword: req.query.keyword,
       level: req.query.level,
-      source: req.query.source
+      source: req.query.source,
+      exception_type: req.query.exception_type
     };
 
     const result = logService.exportLogsToCSV(filters);

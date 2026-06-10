@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const statsService = require('../services/statsService');
+const alertService = require('../services/alertService');
 
 // GET /api/stats/overview - 统计概览
 router.get('/overview', (req, res) => {
@@ -74,6 +75,41 @@ router.get('/apps', (req, res) => {
 router.get('/realtime', (req, res) => {
   try {
     const stats = statsService.getRealtimeStats();
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+// GET /api/stats/alerts/status - 告警状态统计
+router.get('/alerts/status', (req, res) => {
+  try {
+    const appId = req.query.app_id ? parseInt(req.query.app_id) : null;
+    const stats = alertService.getAlertStatsByStatus(appId);
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+// GET /api/stats/alerts/assignee - 告警处理人统计
+router.get('/alerts/assignee', (req, res) => {
+  try {
+    const appId = req.query.app_id ? parseInt(req.query.app_id) : null;
+    const days = req.query.days ? parseInt(req.query.days) : 7;
+    const stats = alertService.getAlertStatsByAssignee(appId, days);
     res.json({
       success: true,
       data: stats

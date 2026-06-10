@@ -25,7 +25,8 @@ import {
   EyeOutlined,
   DownloadOutlined,
   FilterOutlined,
-  CodeOutlined
+  CodeOutlined,
+  BugOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import {
@@ -33,9 +34,11 @@ import {
   getLogDetail,
   getExceptionAggregation,
   exportLogs,
-  getExceptionSamples
+  getExceptionSamples,
+  exportExceptions
 } from '../services/logService.js'
 import { getApps } from '../services/appService.js'
+import TroubleshootingDrawer from '../components/TroubleshootingDrawer.jsx'
 
 const { RangePicker } = DatePicker
 const { Option } = Select
@@ -66,6 +69,8 @@ function LogSearch() {
   const [expandedRowKeys, setExpandedRowKeys] = useState([])
   const [exceptionSamples, setExceptionSamples] = useState({})
   const [samplesLoading, setSamplesLoading] = useState({})
+  const [troubleshootingDrawerVisible, setTroubleshootingDrawerVisible] = useState(false)
+  const [troubleshootingContext, setTroubleshootingContext] = useState(null)
 
   // 加载应用列表
   const loadApps = async () => {
@@ -313,6 +318,32 @@ function LogSearch() {
     }
   }
 
+  // 打开排障工作台
+  const handleOpenTroubleshooting = (log) => {
+    setTroubleshootingContext({
+      logId: log.id,
+      exceptionHash: log.exceptionHash,
+      traceId: log.traceId,
+      appId: log.app_id,
+      appName: log.appName,
+      logMessage: log.message
+    })
+    setTroubleshootingDrawerVisible(true)
+  }
+
+  // 从异常聚合打开排障工作台
+  const handleOpenTroubleshootingFromException = (exception) => {
+    setTroubleshootingContext({
+      logId: null,
+      exceptionHash: exception.exception_hash,
+      traceId: null,
+      appId: exception.app_id,
+      appName: exception.appName,
+      logMessage: exception.exception_type
+    })
+    setTroubleshootingDrawerVisible(true)
+  }
+
   // 导出日志
   const handleExport = async () => {
     setExporting(true)
@@ -336,11 +367,45 @@ function LogSearch() {
         
         const size = blob.size || 0
         const estimatedCount = Math.floor(size / 500)
-        message.success(`导出成功，约 ${estimatedCount} 条记录`)
+        message.success(`导出成功，共 ${estimatedCount} 条记录`)
       }
     } catch (error) {
       console.error('导出日志失败:', error)
       message.error('导出日志失败')
+    } finally {
+      hideLoading()
+      setExporting(false)
+    }
+  }
+
+  // 导出异常聚合数据
+  const handleExportExceptions = async () => {
+    setExporting(true)
+    const hideLoading = message.loading('正在导出异常数据，请稍候...', 0)
+    try {
+      const values = form.getFieldsValue()
+      const params = getSearchParams(values)
+      
+      const blob = await exportExceptions(params)
+      
+      if (blob) {
+        const url = window.URL.createObjectURL(new Blob([blob]))
+        const link = document.createElement('a')
+        link.href = url
+        const timestamp = dayjs().format('YYYYMMDD_HHmmss')
+        link.setAttribute('download', `exceptions_export_${timestamp}.csv`)
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        window.URL.revokeObjectURL(url)
+        
+        const size = blob.size || 0
+        const estimatedCount = Math.floor(size / 300)
+        message.success(`导出成功，共 ${estimatedCount} 条记录`)
+      }
+    } catch (error) {
+      console.error('导出异常数据失败:', error)
+      message.error('导出异常数据失败')
     } finally {
       hideLoading()
       setExporting(false)
@@ -422,17 +487,28 @@ function LogSearch() {
     {
       title: '操作',
       key: 'action',
-      width: 100,
+      width: 180,
       fixed: 'right',
       render: (_, record) => (
-        <Button
-          type="link"
-          icon={<EyeOutlined />}
-          onClick={() => handleViewDetail(record)}
-          size="small"
-        >
-          详情
-        </Button>
+        <Space>
+          <Button
+            type="link"
+            icon={<EyeOutlined />}
+            onClick={() => handleViewDetail(record)}
+            size="small"
+          >
+            详情
+          </Button>
+          <Button
+            type="link"
+            icon={<BugOutlined />}
+            onClick={() => handleOpenTroubleshooting(record)}
+            size="small"
+            danger
+          >
+            排障
+          </Button>
+        </Space>
       )
     }
   ]
@@ -576,6 +652,22 @@ function LogSearch() {
       dataIndex: 'lastOccurrence',
       key: 'lastOccurrence',
       width: 180
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 120,
+      render: (_, record) => (
+        <Button
+          type="link"
+          icon={<BugOutlined />}
+          onClick={() => handleOpenTroubleshootingFromException(record)}
+          size="small"
+          danger
+        >
+          排障
+        </Button>
+      )
     }
   ]
 
@@ -678,7 +770,7 @@ function LogSearch() {
                     type="primary"
                     icon={<SearchOutlined />}
                     onClick={handleSearch}
-                  >
+                  >activeTab === 'list' ? handleExport : tExcepions
                     搜索
                   </Button>
                   <Button
@@ -880,6 +972,13 @@ function LogSearch() {
           )}
         </Spin>
       </Drawer>
+
+      {/* 排障工作台抽屉 */}
+      <TroubleshootingDrawer
+        open={troubleshootingDrawerVisible}
+        onClose={() => setTroubleshootingDrawerVisible(false)}
+        context={troubleshootingContext}
+      />
     </div>
   )
 }

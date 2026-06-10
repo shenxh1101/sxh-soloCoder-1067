@@ -9,6 +9,7 @@ const appRoutes = require('./routes/appRoutes');
 const alertRoutes = require('./routes/alertRoutes');
 const cleanupRoutes = require('./routes/cleanupRoutes');
 const statsRoutes = require('./routes/statsRoutes');
+const troubleshootingRoutes = require('./routes/troubleshootingRoutes');
 
 // 初始化数据库
 initDatabase();
@@ -35,6 +36,7 @@ app.use('/api/apps', appRoutes);
 app.use('/api/alerts', alertRoutes);
 app.use('/api/cleanup', cleanupRoutes);
 app.use('/api/stats', statsRoutes);
+app.use('/api/troubleshooting', troubleshootingRoutes);
 
 // 健康检查
 app.get('/api/health', (req, res) => {

@@ -532,6 +532,95 @@ function exportLogsToCSV(filters = {}) {
   };
 }
 
+// 导出异常聚合数据为 CSV
+function exportExceptionsToCSV(filters = {}) {
+  const { app_id, start_time, end_time, exception_type } = filters;
+
+  let whereClause = ['l.exception_hash IS NOT NULL'];
+  let params = [];
+
+  if (app_id) {
+    whereClause.push('l.app_id = ?');
+    params.push(app_id);
+  }
+
+  if (start_time) {
+    whereClause.push('l.timestamp >= ?');
+    params.push(start_time);
+  }
+
+  if (end_time) {
+    whereClause.push('l.timestamp <= ?');
+    params.push(end_time);
+  }
+
+  if (exception_type) {
+    if (exception_type.includes(',')) {
+      const types = exception_type.split(',').filter(t => t.trim());
+      const placeholders = types.map(() => '?').join(', ');
+      whereClause.push(`l.exception_type IN (${placeholders})`);
+      params.push(...types);
+    } else {
+      whereClause.push('l.exception_type = ?');
+      params.push(exception_type);
+    }
+  }
+
+  const whereSql = `WHERE ${whereClause.join(' AND ')}`;
+
+  // 查询所有符合条件的异常聚合数据，JOIN 应用表获取应用名称
+  const stmt = db.prepare(`
+    SELECT 
+      l.exception_type,
+      a.name as app_name,
+      COUNT(*) as count,
+      MIN(l.timestamp) as first_seen,
+      MAX(l.timestamp) as last_seen,
+      GROUP_CONCAT(DISTINCT l.source) as sources
+    FROM logs l
+    LEFT JOIN applications a ON l.app_id = a.id
+    ${whereSql}
+    GROUP BY l.app_id, l.exception_hash, l.exception_type
+    ORDER BY last_seen DESC
+  `);
+
+  const exceptions = stmt.all(...params);
+
+  // 生成 CSV
+  const headers = ['异常类型', '所属应用', '出现次数', '首次出现', '最后出现', '来源列表'];
+  const rows = exceptions.map(e => {
+    // 处理 sources 字段，转为逗号分隔的字符串
+    const sourcesStr = e.sources ? e.sources.replace(/,/g, '、') : '';
+    
+    return [
+      e.exception_type || '未知异常',
+      e.app_name || '未知应用',
+      e.count,
+      e.first_seen,
+      e.last_seen,
+      sourcesStr
+    ].map(escapeCSVField).join(',');
+  });
+
+  const csvContent = [headers.join(','), ...rows].join('\n');
+
+  // 生成文件名
+  const now = new Date();
+  const timestamp = now.getFullYear().toString() +
+    (now.getMonth() + 1).toString().padStart(2, '0') +
+    now.getDate().toString().padStart(2, '0') + '_' +
+    now.getHours().toString().padStart(2, '0') +
+    now.getMinutes().toString().padStart(2, '0') +
+    now.getSeconds().toString().padStart(2, '0');
+  const filename = `exception_aggregate_${timestamp}.csv`;
+
+  return {
+    csv: csvContent,
+    filename,
+    count: exceptions.length
+  };
+}
+
 // 日志摘要 - 按级别统计数量和趋势
 function getLogSummary(filters = {}) {
   const { app_id, days = 7 } = filters;
@@ -643,6 +732,7 @@ module.exports = {
   getExceptionAggregate,
   getExceptionSamples,
   exportLogsToCSV,
+  exportExceptionsToCSV,
   getLogSummary,
   generateExceptionHash
 };

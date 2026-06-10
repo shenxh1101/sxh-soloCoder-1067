@@ -73,12 +73,25 @@ function initDatabase() {
       condition_value TEXT NOT NULL,
       level_threshold TEXT CHECK(level_threshold IN ('debug', 'info', 'warn', 'error', 'fatal')),
       notify_type TEXT NOT NULL,
+      notify_target TEXT,
       webhook_url TEXT,
       is_enabled INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
       FOREIGN KEY (app_id) REFERENCES applications(id) ON DELETE CASCADE
     )
   `);
+
+  // 尝试为已存在的 alert_rules 表添加 notify_target 字段（如果不存在）
+  try {
+    db.exec(`
+      ALTER TABLE alert_rules ADD COLUMN notify_target TEXT
+    `);
+    console.log('已为 alert_rules 表添加 notify_target 字段');
+  } catch (err) {
+    if (!err.message.includes('duplicate column name')) {
+      console.log('检查 alert_rules 表 notify_target 字段:', err.message);
+    }
+  }
 
   // 告警记录表
   db.exec(`
@@ -91,15 +104,92 @@ function initDatabase() {
       message TEXT NOT NULL,
       resolved INTEGER NOT NULL DEFAULT 0,
       resolved_at TEXT,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'processing', 'ignored', 'resolved')),
+      assignee TEXT,
+      handle_note TEXT,
+      handled_at TEXT,
       FOREIGN KEY (rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE,
       FOREIGN KEY (app_id) REFERENCES applications(id) ON DELETE CASCADE
     )
   `);
 
+  // 为 alert_records 表添加 status 字段
+  try {
+    db.exec(`
+      ALTER TABLE alert_records ADD COLUMN status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'processing', 'ignored', 'resolved'))
+    `);
+    console.log('已为 alert_records 表添加 status 字段');
+  } catch (err) {
+    if (!err.message.includes('duplicate column name')) {
+      console.log('检查 alert_records 表 status 字段:', err.message);
+    }
+  }
+
+  // 为 alert_records 表添加 assignee 字段
+  try {
+    db.exec(`
+      ALTER TABLE alert_records ADD COLUMN assignee TEXT
+    `);
+    console.log('已为 alert_records 表添加 assignee 字段');
+  } catch (err) {
+    if (!err.message.includes('duplicate column name')) {
+      console.log('检查 alert_records 表 assignee 字段:', err.message);
+    }
+  }
+
+  // 为 alert_records 表添加 handle_note 字段
+  try {
+    db.exec(`
+      ALTER TABLE alert_records ADD COLUMN handle_note TEXT
+    `);
+    console.log('已为 alert_records 表添加 handle_note 字段');
+  } catch (err) {
+    if (!err.message.includes('duplicate column name')) {
+      console.log('检查 alert_records 表 handle_note 字段:', err.message);
+    }
+  }
+
+  // 为 alert_records 表添加 handled_at 字段
+  try {
+    db.exec(`
+      ALTER TABLE alert_records ADD COLUMN handled_at TEXT
+    `);
+    console.log('已为 alert_records 表添加 handled_at 字段');
+  } catch (err) {
+    if (!err.message.includes('duplicate column name')) {
+      console.log('检查 alert_records 表 handled_at 字段:', err.message);
+    }
+  }
+
+  // 数据迁移：将 resolved 字段值映射到 status 字段
+  try {
+    const updateStmt = db.prepare(`
+      UPDATE alert_records 
+      SET status = CASE 
+        WHEN resolved = 1 THEN 'resolved'
+        WHEN status = 'pending' THEN 'pending'
+        ELSE status
+      END,
+      handled_at = CASE
+        WHEN resolved = 1 AND handled_at IS NULL THEN resolved_at
+        ELSE handled_at
+      END
+      WHERE status IS NULL OR (resolved = 1 AND status != 'resolved')
+    `);
+    const result = updateStmt.run();
+    if (result.changes > 0) {
+      console.log(`已迁移 ${result.changes} 条 alert_records 数据的 resolved 状态到 status 字段`);
+    }
+  } catch (err) {
+    console.log('数据迁移 alert_records resolved 到 status 失败:', err.message);
+  }
+
   // 创建告警记录索引
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_alert_records_rule_id ON alert_records(rule_id);
     CREATE INDEX IF NOT EXISTS idx_alert_records_triggered_at ON alert_records(triggered_at);
+    CREATE INDEX IF NOT EXISTS idx_alert_records_status ON alert_records(status);
+    CREATE INDEX IF NOT EXISTS idx_alert_records_assignee ON alert_records(assignee);
   `);
 
   // 清理策略表
@@ -113,6 +203,32 @@ function initDatabase() {
       last_run_at TEXT,
       FOREIGN KEY (app_id) REFERENCES applications(id) ON DELETE CASCADE
     )
+  `);
+
+  // 排障备注表
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS troubleshooting_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      app_id INTEGER NOT NULL,
+      log_id INTEGER,
+      exception_hash TEXT,
+      trace_id TEXT,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      assignee TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      metadata TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (app_id) REFERENCES applications(id) ON DELETE CASCADE
+    )
+  `);
+
+  // 创建排障备注索引
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_troubleshooting_app_id ON troubleshooting_notes(app_id);
+    CREATE INDEX IF NOT EXISTS idx_troubleshooting_trace_id ON troubleshooting_notes(trace_id);
+    CREATE INDEX IF NOT EXISTS idx_troubleshooting_exception_hash ON troubleshooting_notes(exception_hash);
   `);
 
   console.log('数据库初始化完成');
