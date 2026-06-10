@@ -208,7 +208,7 @@ function AlertRules() {
       setSubmitting(true)
       const res = await updateAlertRecordStatus(currentStatusRecord.id, {
         status: values.status,
-        remark: values.remark
+        handle_note: values.remark
       })
       if (res.success) {
         message.success('状态更新成功')
@@ -795,9 +795,9 @@ function AlertRules() {
                         <Descriptions.Item label="日志数量">
                           {record.log_count || 0}
                         </Descriptions.Item>
-                        {record.remark && (
+                        {record.handle_note && (
                           <Descriptions.Item label="处理备注">
-                            {record.remark}
+                            {record.handle_note}
                           </Descriptions.Item>
                         )}
                         {record.status === 'resolved' && record.resolved_at && (

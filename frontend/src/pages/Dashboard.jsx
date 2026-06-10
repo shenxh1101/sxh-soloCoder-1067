@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Row, Col, Statistic, Table, Tag, Spin, Empty } from 'antd'
+import { useLocation } from 'react-router-dom'
+import { Card, Row, Col, Statistic, Table, Tag, Spin, Empty, Button } from 'antd'
 import {
   FileTextOutlined,
   CalendarOutlined,
@@ -7,7 +8,8 @@ import {
   AppstoreOutlined,
   BellOutlined,
   WarningOutlined,
-  CheckCircleOutlined
+  CheckCircleOutlined,
+  ReloadOutlined
 } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import dayjs from 'dayjs'
@@ -23,7 +25,9 @@ import { getAlertStatsByStatus } from '../services/alertService.js'
 
 // 统计概览页面
 function Dashboard() {
+  const location = useLocation()
   const [loading, setLoading] = useState(false)
+  const [lastUpdate, setLastUpdate] = useState(null)
   const [stats, setStats] = useState({
     total_logs: 0,
     today_logs: 0,
@@ -127,7 +131,13 @@ function Dashboard() {
       console.error('加载统计数据失败:', error)
     } finally {
       setLoading(false)
+      setLastUpdate(new Date())
     }
+  }
+
+  // 手动刷新
+  const handleRefresh = () => {
+    loadData()
   }
 
   useEffect(() => {
@@ -135,7 +145,7 @@ function Dashboard() {
     // 每30秒刷新一次
     const timer = setInterval(loadData, 30000)
     return () => clearInterval(timer)
-  }, [])
+  }, [location.pathname])
 
   // 日志趋势图配置
   const trendOption = {
@@ -312,7 +322,23 @@ function Dashboard() {
   return (
     <Spin spinning={loading}>
       <div>
-        <h2 style={{ marginTop: 0, marginBottom: 24 }}>统计概览</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+          <h2 style={{ marginTop: 0, marginBottom: 0 }}>统计概览</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            {lastUpdate && (
+              <span style={{ color: '#888', fontSize: 12 }}>
+                最后更新: {dayjs(lastUpdate).format('HH:mm:ss')}
+              </span>
+            )}
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={handleRefresh}
+              loading={loading}
+            >
+              刷新数据
+            </Button>
+          </div>
+        </div>
 
         <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
           <Col xs={24} sm={12} md={8} lg={4} xl={4}>

@@ -781,7 +781,7 @@ function LogSearch() {
                   </Button>
                   <Button
                     icon={<DownloadOutlined />}
-                    onClick={handleExport}
+                    onClick={activeTab === 'list' ? handleExport : handleExportExceptions}
                     loading={exporting}
                   >
                     导出
